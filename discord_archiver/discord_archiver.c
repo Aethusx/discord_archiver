@@ -1,5 +1,3 @@
-#pragma comment(lib, "../curl/libcurldll.a")
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,7 +218,6 @@ int discord_get_messagelist(char *channel_id, char *token, sqlite3 *db)
 		fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
 
 	/* parse first message list */
-	int parse_response = 0;
 	if (parse_message(cJSON_Parse(response.ptr), db) == 1)
 		return 1;
 
