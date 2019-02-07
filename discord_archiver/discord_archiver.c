@@ -12,9 +12,101 @@ struct string {
 	size_t len;
 };
 
+/* linked list for cache */
+typedef struct node {
+	long long int val; /* id of user */
+	int val2; /* id in database */
+	struct node * next;
+} node_t;
+
 /* global variables */
 struct string last_id;
 short verbose = 0;
+node_t * cache = NULL;
+int cache_last = 0;
+
+/* print add linked list values*/
+void print_list(node_t *main) 
+{
+	node_t *current = main;
+	while (current != NULL) 
+	{
+		printf("%lld = %d \n", current->val, current->val2);
+		current = current->next;
+	}
+}
+
+/* add value to linked list */
+void add(node_t *main, long long int val) 
+{
+	node_t *current = main;
+	
+	while (current->next != NULL) 
+	{
+		current = current->next;
+	}
+	
+	cache_last++;
+	current->next = malloc(sizeof(node_t));
+	current->next->val = val;
+	current->next->val2 = cache_last;
+	current->next->next = NULL;
+}
+
+/* check if val exists in linked list */
+int id_exists(node_t *main, long long int val)
+{
+	node_t *current = main;
+	while (current->next != NULL) 
+	{
+		current = current->next;
+		if (current->val == val)
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* get val2 by searching val */
+int get_user_id(node_t *main, long long int val)
+{
+	node_t *current = main;
+	while (current->next != NULL) 
+	{
+		current = current->next;
+		if (current->val == val)
+		{
+			return current->val2;
+		}
+	}
+}
+
+/* create new user in database */
+void create_user(sqlite3 *db, char *username, int discriminator, long long int id, char *avatar)
+{
+	int rc;
+	/* prepare sqlite statement */
+	sqlite3_stmt *stmt;
+	sqlite3_prepare_v2(db, "INSERT INTO Users VALUES(?, ?, ?, ?, ?);", -1, &stmt, NULL);
+
+	/* bind values to sqlite statement */
+	sqlite3_bind_int(stmt, 1, get_user_id(cache, id));
+	sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
+	sqlite3_bind_int(stmt, 3, discriminator);
+	sqlite3_bind_int64(stmt, 4, id);
+	sqlite3_bind_text(stmt, 5, avatar, -1, SQLITE_STATIC);
+
+	/* execute statement */
+	rc = sqlite3_step(stmt);
+
+	/* check for errors */
+	if (rc != SQLITE_DONE)
+		printf("ERROR create_user inserting data: %s\n", sqlite3_errmsg(db));
+
+	/* finalize our statement */
+	sqlite3_finalize(stmt);
+}
 
 /* function for parsing json output from curl */
 int parse_message(cJSON *array, sqlite3 *db)
@@ -40,10 +132,24 @@ int parse_message(cJSON *array, sqlite3 *db)
 		cJSON *author = cJSON_GetObjectItem(item, "author");
 		 cJSON *username = cJSON_GetObjectItem(author, "username");
 		 cJSON *discriminator = cJSON_GetObjectItem(author, "discriminator");
+		 cJSON *author_id = cJSON_GetObjectItem(author, "id");
+		 cJSON *avatar = cJSON_GetObjectItem(author, "avatar");
 
 		/* update last_id */
 		last_id.ptr = id->valuestring;
 
+		/* test */
+		if (id_exists(cache, strtoll(author_id->valuestring,NULL,0)) == 0)
+		{
+			add(cache, strtoll(author_id->valuestring,NULL,0));
+			create_user(db,
+				username->valuestring,
+				atoi(discriminator->valuestring), /* atoi is workaround, valueint && valuedouble dont work correctly  */
+				strtoll(author_id->valuestring, NULL, 0),  /* strtoll is workaround, valueint && valuedouble dont work correctly */
+				avatar->valuestring);
+			
+		}
+		
 		/* if there is attachment set attachments->url and attachments->file_name*/
 		if (cJSON_GetArraySize(attachments) != 0)
 		{
@@ -53,17 +159,16 @@ int parse_message(cJSON *array, sqlite3 *db)
 			
 		/* prepare sqlite statement */
 		sqlite3_stmt *stmt;
-		sqlite3_prepare_v2(db, "INSERT INTO Messages VALUES(?, ?, ?, ?, ?, ?, ?);", -1, &stmt, NULL);
+		sqlite3_prepare_v2(db, "INSERT INTO Messages VALUES(?, ?, ?, ?, ?, ?);", -1, &stmt, NULL);
 		//printf("%s#%s: %s\n", username->valuestring, discriminator->valuestring, content->valuestring); //debug
 
 		/* bind values to sqlite statement */
-		sqlite3_bind_int64(stmt, 1, strtoll(id->valuestring, NULL, 10)); /* strtoll is workaround, valueint && valuedouble dont work correctly */
-		sqlite3_bind_text(stmt, 2, timestamp->valuestring, -1, SQLITE_STATIC);
-		sqlite3_bind_text(stmt, 3, username->valuestring, -1, SQLITE_STATIC);
-		sqlite3_bind_int(stmt, 4, atoi(discriminator->valuestring)); /* atoi is workaround, valueint && valuedouble dont work correctly  */
-		sqlite3_bind_text(stmt, 5, content->valuestring, -1, SQLITE_STATIC);
-		sqlite3_bind_text(stmt, 6, attachments_url->valuestring, -1, SQLITE_STATIC);
-		sqlite3_bind_text(stmt, 7, attachments_name->valuestring, -1, SQLITE_STATIC);
+		sqlite3_bind_int(stmt, 1, get_user_id(cache, strtoll(author_id->valuestring, NULL, 0))); /* atoi is workaround, valueint && valuedouble dont work correctly  */
+		sqlite3_bind_int64(stmt, 2, strtoll(id->valuestring, NULL, 10)); /* strtoll is workaround, valueint && valuedouble dont work correctly */
+		sqlite3_bind_text(stmt, 3, timestamp->valuestring, -1, SQLITE_STATIC);
+		sqlite3_bind_text(stmt, 4, content->valuestring, -1, SQLITE_STATIC);
+		sqlite3_bind_text(stmt, 5, attachments_url->valuestring, -1, SQLITE_STATIC);
+		sqlite3_bind_text(stmt, 6, attachments_name->valuestring, -1, SQLITE_STATIC);
 		
 		/* execute statement */
 		rc = sqlite3_step(stmt);
@@ -75,15 +180,6 @@ int parse_message(cJSON *array, sqlite3 *db)
 		/* finalize our statement */
 		sqlite3_finalize(stmt);
 		 
-		/*//NOT SAFE !! Use bind not raw execute
-		char *sql[512];
-		sqlite3_mprintf(sql, "INSERT INTO Messages VALUES(%s, '%s', '%s', %s, '%s', '%s');", id->valuestring, timestamp->valuestring ,username->valuestring, discriminator->valuestring, content->valuestring, attachments_url->valuestring);
-		rc = sqlite3_exec(db, sql, 0, 0, &err_msg);
-
-		// check for errors
-		if (rc != SQLITE_OK)
-			fprintf(stderr, "SQL error: %s\n", err_msg);*/
-
 		/* if verbose write output*/
 		if (verbose == 1)
 			printf("%s#%s: %s\n", username->valuestring, discriminator->valuestring, content->valuestring);
@@ -91,7 +187,6 @@ int parse_message(cJSON *array, sqlite3 *db)
 		/* set next object */
 		item = item->next;
 	}
-
 	/* if array size is 0 that means last_id == last message on channel so we can pass 1 to indicate that job is done */
 	if (cJSON_GetArraySize(array) == 0)
 		return 1;
@@ -262,13 +357,13 @@ void download_images(sqlite3 *db)
 	{
 		/* create better curl error handling */
 		if (!curl)
-			break;
+			return;
 		
 		/* set variables, note: outfilename needs unique identificator because files with same name can overwrite! */
 		char *url = sqlite3_column_text(stmt, 0);
 		char outfilename[512];
 		
-		/* change output directoryif you are using unix */
+		/* change output directory if you are using unix */
 		sprintf(outfilename, "C:\\download\\%s_%s", sqlite3_column_text(stmt, 2), sqlite3_column_text(stmt, 1));
 		
 		/* open file stream */
@@ -332,6 +427,13 @@ int main(int argc, char *argv[])
 		if (strcmp(argv[4], "1") == 0)
 			verbose = 1;
 
+	/* init cache (will fix later) */
+	cache = malloc(sizeof(node_t));
+	cache->val = 9996999;
+	cache->val2 = 0;
+	cache_last = 0;
+	cache->next = NULL;
+	
 	/* init last_id and set to 001 */
 	init_string(&last_id);
 	last_id.ptr = "001";
@@ -349,10 +451,16 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	
+	/* faster but more unsafe */
+	sqlite3_exec(db, "PRAGMA synchronous=OFF", 0, 0, 0);
+	
 	/* drop and create new table */
-	char *sql = "DROP TABLE IF EXISTS Messages;"
-		"CREATE TABLE Messages(Id Bigint, Timestamp Text, Name Text, Tag Smallint, Message Text, Attachment_URL Text, Attachment_Filename Text);";
-	rc = sqlite3_exec(db, sql, 0, 0, &err_msg);
+	rc = sqlite3_exec(db,
+		"DROP TABLE IF EXISTS Messages;"
+		"DROP TABLE IF EXISTS Users;"
+		"CREATE TABLE Messages(UserId INTEGER, Id Bigint, Timestamp Text, Message Text, Attachment_URL Text, Attachment_Filename Text);"
+		"CREATE TABLE Users(UserId INTEGER, Username Text, Discriminator Smallint, Id Bigint, Avatar Text);"
+		, 0, 0, &err_msg);
 	
 	/* check if database has been created correctly */
 	if (rc != SQLITE_OK) 
