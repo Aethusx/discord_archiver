@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h> //access
 #include "../sqlite/sqlite3.h"
 #include "../cJSON/cJSON.h"
 #include "../curl/curl.h"
@@ -42,9 +43,7 @@ void add(node_t *main, long long int val)
 	node_t *current = main;
 	
 	while (current->next != NULL) 
-	{
 		current = current->next;
-	}
 	
 	cache_last++;
 	current->next = malloc(sizeof(node_t));
@@ -61,9 +60,7 @@ int id_exists(node_t *main, long long int val)
 	{
 		current = current->next;
 		if (current->val == val)
-		{
 			return 1;
-		}
 	}
 	return 0;
 }
@@ -76,9 +73,7 @@ int get_user_id(node_t *main, long long int val)
 	{
 		current = current->next;
 		if (current->val == val)
-		{
 			return current->val2;
-		}
 	}
 }
 
@@ -302,7 +297,7 @@ int discord_get_messagelist(char *channel_id, char *token, sqlite3 *db)
 
 	/* set curl options */
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, FALSE); /* ssl fix */
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0); /* ssl fix */
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 0);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writefunc);
@@ -334,7 +329,7 @@ void download_images(sqlite3 *db)
 {
 	/* init sqlite statement, Attachment_URL is needed for url to download, Attachment_Filename is needed for writing file to this name, Id is needed for creating unique filename */
 	sqlite3_stmt *stmt;
-	int rc = sqlite3_prepare(db, "select Attachment_URL,Attachment_Filename,Id from Messages where NOT (Attachment_URL = 'NULL')", -1, &stmt, 0);
+	int rc = sqlite3_prepare(db, "Select Attachment_URL,Attachment_Filename,Id from Messages where NOT (Attachment_URL = 'NULL')", -1, &stmt, 0);
 
 	/* check for sqlite errors */
 	if (rc != SQLITE_OK)
@@ -358,7 +353,7 @@ void download_images(sqlite3 *db)
 		/* create better curl error handling */
 		if (!curl)
 			return;
-		
+
 		/* set variables, note: outfilename needs unique identificator because files with same name can overwrite! */
 		char *url = sqlite3_column_text(stmt, 0);
 		char outfilename[512];
@@ -366,29 +361,38 @@ void download_images(sqlite3 *db)
 		/* change output directory if you are using unix */
 		sprintf(outfilename, "C:\\download\\%s_%s", sqlite3_column_text(stmt, 2), sqlite3_column_text(stmt, 1));
 		
-		/* open file stream */
-		fp = fopen(outfilename, "wb");
+		/* check if photo exists */
+		if (access(outfilename, F_OK) != -1) 
+		{
+			if (verbose == 1)
+				printf("Found %s ,skipping.", outfilename);
+		} 
+		else
+		{
+			/* open file stream */
+			fp = fopen(outfilename, "wb");
 		
-		/* set curl options */
-		curl_easy_setopt(curl, CURLOPT_URL, url);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
+			/* set curl options */
+			curl_easy_setopt(curl, CURLOPT_URL, url);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
 		
-		/* perform curl request */
-		res = curl_easy_perform(curl);
+			/* perform curl request */
+			res = curl_easy_perform(curl);
 		
-		/* reset curl for next request and close file stream */
-		curl_easy_reset(curl);
-		fclose(fp);
+			/* reset curl for next request and close file stream */
+			curl_easy_reset(curl);
+			fclose(fp);
 		
-		/* if verbose write output*/
-		if(verbose == 1)
-			printf("\n\nURL: '%s' \nFilename: '%s'", url, outfilename);
+			/* if verbose write output*/
+			if (verbose == 1)
+				printf("\n\nURL: '%s' \nFilename: '%s'", url, outfilename);
 
-		/* evaluate our statement */
-		rc = sqlite3_step(stmt);
+			/* evaluate our statement */
+			rc = sqlite3_step(stmt);
+		}
 	}
 	/* end our statement */
 	sqlite3_finalize(stmt);
@@ -408,14 +412,14 @@ int main(int argc, char *argv[])
 		return 7;
 	}
 	
-	/* check if channel id length is smaller than 64 */
+	/* check if token length is smaller than 64 */
 	if (strlen(argv[2]) >= 64)
 	{
 		fprintf(stderr, "Incorrect token argument - token is too long.\n");
 		return 8;
 	}
 	
-	/* check if channel id length is smaller than 159 */
+	/* check if database name length is smaller than 159 */
 	if (strlen(argv[3]) >= 159)
 	{
 		fprintf(stderr, "Incorrect database name argument - file name is too long.\n");
