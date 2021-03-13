@@ -263,7 +263,7 @@ int discord_get_messagelist(char *channel_id, char *token, sqlite3 *db)
 
 		/* set curl options */
 		curl_easy_setopt(curl, CURLOPT_URL, url);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, FALSE); /* ssl fix */
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0); /* ssl fix */
 		curl_easy_setopt(curl, CURLOPT_VERBOSE, 0);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writefunc);
